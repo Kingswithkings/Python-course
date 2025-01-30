@@ -1,0 +1,1 @@
+& C:/Users/HP/AppData/Local/Programs/Python/Python313/python.exe "c:/Users/HP/Desktop/Python course/FilesHandling.py"Hello hello hello, this is kings& C:/Users/HP/AppData/Local/Programs/Python/Python313/python.exe "c:/Users/HP/Desktop/Python course/FilesHandling.py"
