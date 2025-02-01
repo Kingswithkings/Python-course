@@ -1,5 +1,6 @@
 import gradio as gr
 
+<<<<<<< HEAD
 gr.load_chat("http://localhost:11434/v1/", model="llama3.2", token="ollama").launch()
 
 
@@ -48,3 +49,6 @@ def greet(name):
 
 demo = gr.Interface(fn=greet, inputs="text", outputs="text")
 demo.lunch()
+=======
+gr.load_chat
+>>>>>>> 217fdd4 (Add voice and the app searches online)
