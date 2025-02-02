@@ -37,6 +37,9 @@ gr.ChatInterface(
     fn=slow_echo,
     type="messages"
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> b84fe18 (chat ChatBot1)
 ).launch()
 
 
@@ -47,7 +50,11 @@ def greet(name):
     return "Hello " + name + "!"
 
 demo = gr.Interface(fn=greet, inputs="text", outputs="text")
+<<<<<<< HEAD
 demo.lunch()
 gr.load_chat
 (Add voice and the app searches online
 ).launch()(Chatbots)
+=======
+demo.lunch()
+>>>>>>> b84fe18 (chat ChatBot1)
