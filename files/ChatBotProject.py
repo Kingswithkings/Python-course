@@ -1,77 +1,189 @@
 import gradio as gr
-import random
 import speech_recognition as sr
 import pyttsx3
 import openai
 from googletrans import Translator
+import logging
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+import time
 
-engine = pyttsx3.init()
-voices = engine.getProperty('voices')
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
+# Constants for retry mechanism
+MAX_RETRIES = 3
+BACKOFF_FACTOR = 1
+ERROR_CODES = [502, 503, 504]
 
-def speak(text, voice='default', lang='en'):
-    engine = pyttsx3.init()
-    voices = engine.getProperty('voices')
-    if voice == 'female':
-        engine.setProperty('voice', voices[1].id)
-    elif voice == 'male':
-        engine.setProperty('voice, voices[0].id')
+class SpeechSystem:
+    def __init__(self):
+        self.engine = pyttsx3.init()
+        self.voices = self.engine.getProperty('voices')
+        self.translator = Translator()
+        
+    def speak(self, text, voice='default', lang='en'):
+        """Convert text to speech with translation support."""
+        try:
+            # Handle voice selection
+            if voice == 'female' and len(self.voices) > 1:
+                self.engine.setProperty('voice', self.voices[1].id)
+            elif voice == 'male':
+                self.engine.setProperty('voice', voices[0].id)
+            
+            # Translate text if needed
+            if lang != 'en':
+                translated_text = self.translator.translate(text, dest=lang).text
+                logger.info(f"Translated '{text}' to '{translated_text}' in {lang}")
+                text_to_speak = translated_text
+            else:
+                text_to_speak = text
+            
+            # Speak the text
+            self.engine.say(text_to_speak)
+            self.engine.runAndWait()
+            return text_to_speak
+        
+        except Exception as e:
+            logger.error(f"Error in speak function: {str(e)}")
+            raise
 
+class Assistant:
+    def __init__(self):
+        self.speech_system = SpeechSystem()
+        openai.api_key = "your-api-key-here"
+        
+    def fetch_information(self, question, lang='en'):
+        """Fetch information using OpenAI API with translation support."""
+        retry_strategy = Retry(
+            total=MAX_RETRIES,
+            backoff_factor=BACKOFF_FACTOR,
+            status_forcelist=ERROR_CODES,
+            allowed_methods=["POST"]
+        )
+        
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        session = requests.Session()
+        session.mount("https://", adapter)
+        
+        for attempt in range(MAX_RETRIES):
+            try:
+                response = session.post(
+                    'https://api.openai.com/v1/chat/completions',
+                    json={
+                        'model': 'gpt-4',
+                        'messages': [{'role': 'user', 'content': question}],
+                        'temperature': 0,
+                        'max_tokens': 2048,
+                        'top_p': 0.95,
+                        'frequency_penalty': 0,
+                        'presence_penalty': 0
+                    },
+                    headers={'Authorization': f'Bearer {openai.api_key}'},
+                    timeout=30
+                )
+                
+                response.raise_for_status()
+                result = response.json()['choices'][0]['message']['content']
+                
+                if lang != 'en':
+                    translated_response = self.speech_system.translator.translate(
+                        result, dest=lang).text
+                    logger.info(f"Successfully translated response to {lang}")
+                    return translated_response
+                return result
+                
+            except requests.exceptions.RequestException as e:
+                logger.error(f"API Request Error (attempt {attempt + 1}/{MAX_RETRIES}): {str(e)}")
+                
+                if attempt == MAX_RETRIES - 1:
+                    raise Exception(f"Failed after {MAX_RETRIES} attempts: {str(e)}")
+                
+                # Exponential backoff
+                delay = BACKOFF_FACTOR * (2 ** attempt)
+                time.sleep(delay)
+                logger.info(f"Waiting {delay} seconds before retry...")
 
-translator = Translator()
-translated_text = translator.translate(text, dest=lang).text
-engine.say(translated_text)
-engine.runAndWait()
-return translated_text     
+    def assistive_nurse(self, patient_name, age, symptoms, question, lang='en'):
+        """Nurse Mode: Collects patient data and provides health advice."""
+        try:
+            info = self.fetch_information(question, lang) if question else \
+                   "Please consult a doctor for detailed advice."
+            response = f"Hello {patient_name}, aged {age}. {info}"
+            translated_response = self.speech_system.speak(response, voice='female', lang=lang)
+            return translated_response
+        except Exception as e:
+            logger.error(f"Nurse mode error: {str(e)}")
+            return "An error occurred while processing your request."
 
+    def child_assistant(self, question, lang='en'):
+        """Child Mode: Answers questions conversationally."""
+        try:
+            response = self.fetch_information(question, lang)
+            translated_response = self.speech_system.speak(response, voice='male', lang=lang)
+            return translated_response
+        except Exception as e:
+            logger.error(f"Child assistant error: {str(e)}")
+            return "I'm sorry, I couldn't process your question."
 
-engine.say("Text-to-Speech system initialized sucessfully.")
-engine.runAndWait()
-
+    def doctor_assistant(self, patient_id, medical_history, symptoms, question, lang='en'):
+        """Doctor Mode: Provides detailed medical analysis and diagnosis."""
+        try:
+            # Prepare comprehensive medical query
+            medical_context = f"""
+            Patient ID: {patient_id}
+            Medical History: {medical_history}
+            Current Symptoms: {symptoms}
+            Question: {question}
+            
+            Please provide a detailed medical analysis including:
+            1. Differential diagnosis
+            2. Recommended tests
+            3. Treatment options
+            4. Follow-up recommendations
+            """
+            
+            # Get medical analysis
+            analysis = self.fetch_information(medical_context, lang)
+            
+            # Create structured response
+            response = f"""
+            Medical Analysis Report:
+            ======================
+            Patient ID: {patient_id}
+            {analysis}
+            """
+            
+            # Speak the response
+            translated_response = self.speech_system.speak(response, voice='male', lang=lang)
+            return translated_response
+            
+        except Exception as e:
+            logger.error(f"Doctor mode error: {str(e)}")
+            return "An error occurred while processing the medical analysis."
 
 def listen():
+    """Listen for voice commands."""
     recognizer = sr.Recognizer()
     with sr.Microphone() as source:
         try:
             audio = recognizer.listen(source)
-            return "Sorry, I didnt catch that."
+            return recognizer.recognize_google(audio)
+        except sr.UnknownValueError:
+            logger.error("Speech recognition error: Could not understand audio")
+            return "Sorry, I didn't catch that."
         except sr.RequestError:
+            logger.error("Speech recognition service unavailable")
             return "Speech recognition service is unavailable."
-        
 
-def fetch_information(question, lang='en'):
-    """
-    Uses OpenAI to fetch accurate and detailed information.
-    """
-    openai.api_key = "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"
-    response = openai.ChatCompletion.create(
-        model='gpt-4',
-        messages=[{"role": "user", "content": question}]
-    )
+# Create assistant instance
+assistant = Assistant()
 
-
-def assistive_nurse(patient_name, age, symptons, question, lang='en'):
-    """
-    Nurse Mode: Collects patient data and provides health advice.
-    """
-    info = fetch_information(question, lang) if question else "Please consult a doctor for detailed advise."
-    response = f"Hello {patient_name}, aged {age}. {info}"
-    translated_reponse = speak(response, voice='female', lang=lang)
-    return translated_reponse
-
-
-def child_assistant(question, lang='en'):
-    """
-    Child Mode: Answers questions conversationally.
-    """
-    response = fetch_information(question, lang)
-    translated_response = speak(response, voice='male', lang=lang)
-    return translated_response
-
-
+# Build Gradio interface
 with gr.Blocks() as chatbot:
-    gr.Markdown("### Assistive Nurse & Child care Chatbot with Multilingual Support")
-
+    gr.Markdown("### Medical Assistant Chatbot with Multilingual Support")
+    
     with gr.Tab("Nurse Mode"):
         patient_name = gr.Textbox(label="Patient Name")
         age = gr.Number(label="Age")
@@ -81,20 +193,53 @@ with gr.Blocks() as chatbot:
         output = gr.Textbox(label="Response")
         submit = gr.Button("Get Advice")
         voice_command = gr.Button("Speak Command")
+        
+        submit.click(
+            lambda n, a, s, q, l: assistant.assistive_nurse(n, a, s, q, l),
+            inputs=[patient_name, age, symptoms, question, lang],
+            outputs=output
+        )
+        voice_command.click(
+            lambda: assistant.assistive_nurse(listen(), listen(), listen(), listen(), listen()),
+            outputs=output
+        )
+    
+    with gr.Tab("Child Mode"):
+        child_question = gr.Textbox(label="Ask me anything!")
+        lang = gr.Textbox(label="Language (e.g., en, fr, es)", value="en")
+        child_output = gr.Textbox(label="Response")
+        child_submit = gr.Button("Ask")
+        child_voice_command = gr.Button("Speak Question")
+        
+        child_submit.click(
+            lambda q, l: assistant.child_assistant(q, l),
+            inputs=[child_question, lang],
+            outputs=child_output
+        )
+        child_voice_command.click(
+            lambda: assistant.child_assistant(listen(), listen()),
+            outputs=child_output
+        )
+    
+    with gr.Tab("Doctor Mode"):
+        patient_id = gr.Textbox(label="Patient ID")
+        medical_history = gr.Textbox(label="Medical History")
+        symptoms = gr.Textbox(label="Current Symptoms")
+        question = gr.Textbox(label="Medical Question")
+        lang = gr.Textbox(label="Language (e.g., en, fr, es)", value="en")
+        output = gr.Textbox(label="Medical Analysis")
+        submit = gr.Button("Analyze")
+        voice_command = gr.Button("Speak Analysis")
+        
+        submit.click(
+            lambda pid, hist, symp, q, l: assistant.doctor_assistant(pid, hist, symp, q, l),
+            inputs=[patient_id, medical_history, symptoms, question, lang],
+            outputs=output
+        )
+        voice_command.click(
+            lambda: assistant.doctor_assistant(listen(), listen(), listen(), listen(), listen()),
+            outputs=output
+        )
 
-
-        submit.click(assistive_nurse, inputs=[patient_name, age, symptoms, question, lang], outputs=output)
-        voice_command.click(lambda: assistive_nurse(listen(), listen(), listen(), listen(), listen()), outputs=output)
-
-with gr.Tab("Child Mode"):
-    child_question = gr.Textbox(label="Ask me anything!")
-    lang = gr.Textbox(label="Language (e.g., en, fr, es)", value="en")
-    child_output = gr.Textbox(label="Response")
-    child_submit = gr.Button("Ask")
-    child_voice_command = gr.Button("speak Question")
-
-
-    child_submit.click(child_assistant, inputs=[child_question, lang], outputs=child_output)
-    child_voice_command.click(lambda: child_assistant(listen(), listen()), outputs=child_output)
-
+if __name__ == "__main__":
     chatbot.launch()
